@@ -18,6 +18,10 @@ Based on the [Netflix subtitle downloader](https://greasyfork.org/en/scripts/266
 - **Force all languages** — Make Netflix show subtitle tracks for all available languages
 - **Preferred locale** — Set a preferred subtitle locale
 
+## Screenshot
+
+<img width="300" alt="Extension popup" src="screenshot.png">
+
 ## Install
 
 1. Download or clone this repository
