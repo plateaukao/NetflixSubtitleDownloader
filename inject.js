@@ -91,6 +91,35 @@
     return response;
   };
 
+  // Extract boxart URL from Falcor cache (portrait poster for book covers)
+  const extractBoxart = () => {
+    try {
+      const videoId = window.location.pathname.split('/').pop();
+      const cache = window.netflix && window.netflix.falcorCache;
+      if (!cache || !cache.videos || !cache.videos[videoId]) return;
+      const video = cache.videos[videoId];
+      // Look for boxart entries — Netflix stores them at various sizes like _342x684, _400x566
+      const boxartKeys = Object.keys(video).filter(k => k.startsWith('boxart'));
+      for (const key of boxartKeys) {
+        const entries = video[key];
+        if (!entries) continue;
+        // entries might have size keys like _342x684
+        for (const sizeKey of Object.keys(entries)) {
+          const val = entries[sizeKey];
+          if (val && val.value && val.value.url) {
+            window.dispatchEvent(new CustomEvent('netflix_sub_downloader_data', {
+              detail: { type: 'boxart', data: val.value.url }
+            }));
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+  };
+  // Run after a delay to let Falcor cache populate
+  setTimeout(extractBoxart, 3000);
+  setTimeout(extractBoxart, 8000);
+
   // Scroll fix for language selector
   const observer = new MutationObserver(mutations => {
     for (const mutation of mutations) {

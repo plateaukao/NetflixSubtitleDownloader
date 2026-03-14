@@ -319,17 +319,33 @@ function processMetadata(data) {
     return;
   }
 
-  // Extract cover image URL from metadata
-  // Netflix metadata may include artwork in various locations
+  // Extract cover image URL — prefer portrait boxart (book-cover ratio)
+  coverImageUrl = null;
   try {
-    const artwork = result.artwork || result.boxart || result.storyart;
-    if (artwork && artwork.length > 0) {
-      // Pick the largest image
-      const sorted = [...artwork].sort((a, b) => (b.w || 0) - (a.w || 0));
-      coverImageUrl = sorted[0].url;
+    // 1. Prefer boxart (portrait poster) over landscape artwork
+    const sources = [result.boxart, result.artwork, result.storyart].filter(Boolean);
+    for (const artList of sources) {
+      if (!artList || !artList.length) continue;
+      // Pick portrait images (h > w) first, then largest
+      const portrait = artList.filter(a => (a.h || 0) > (a.w || 0));
+      if (portrait.length > 0) {
+        portrait.sort((a, b) => (b.h || 0) - (a.h || 0));
+        coverImageUrl = portrait[0].url;
+        break;
+      }
+    }
+    // If no portrait found, take the largest from any source
+    if (!coverImageUrl) {
+      for (const artList of sources) {
+        if (artList && artList.length > 0) {
+          const sorted = [...artList].sort((a, b) => (b.w || 0) - (a.w || 0));
+          coverImageUrl = sorted[0].url;
+          break;
+        }
+      }
     }
   } catch (_) {}
-  // Fallback: try og:image meta tag
+  // 2. Fallback: try og:image meta tag
   if (!coverImageUrl) {
     try {
       const ogImg = document.querySelector('meta[property="og:image"]');
@@ -749,6 +765,7 @@ window.addEventListener('netflix_sub_downloader_data', e => {
   if (type === 'subs') processSubInfo(data);
   else if (type === 'id_override') idOverrides[data[0]] = data[1];
   else if (type === 'metadata') processMetadata(data);
+  else if (type === 'boxart') { if (!coverImageUrl) coverImageUrl = data; }
   else if (type === 'popstate') {
     const menu = document.getElementById('nsd-menu');
     if (menu) menu.style.display = data.startsWith('/watch') ? '' : 'none';
