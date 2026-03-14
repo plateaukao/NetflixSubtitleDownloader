@@ -43,6 +43,14 @@ function sendToTab(action) {
 $('btn-download').addEventListener('click', () => sendToTab('download'));
 $('btn-season').addEventListener('click', () => sendToTab('downloadSeason'));
 $('btn-all').addEventListener('click', () => sendToTab('downloadAll'));
+$('btn-epub-season').addEventListener('click', () => {
+  sendToTab('downloadEpubSeason');
+  window.close();
+});
+$('btn-epub-all').addEventListener('click', () => {
+  sendToTab('downloadEpubAll');
+  window.close();
+});
 
 // Check status
 chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
@@ -51,6 +59,8 @@ chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
     $('btn-download').disabled = true;
     $('btn-season').disabled = true;
     $('btn-all').disabled = true;
+    $('btn-epub-season').disabled = true;
+    $('btn-epub-all').disabled = true;
     return;
   }
 
@@ -68,6 +78,8 @@ chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
       $('btn-download').disabled = true;
       $('btn-season').disabled = true;
       $('btn-all').disabled = true;
+      $('btn-epub-season').disabled = true;
+    $('btn-epub-all').disabled = true;
     } else if (response.langList.length === 0) {
       $('status').textContent = 'Waiting for subtitle data...';
       $('btn-download').disabled = true;

@@ -65,6 +65,9 @@ const MENU_HTML = `
   <li class="nsd-action nsd-download-to-end nsd-series-only">Download subs from this ep to end</li>
   <li class="nsd-action nsd-download-season nsd-series-only">Download subs for this season</li>
   <li class="nsd-action nsd-download-all nsd-series-only">Download subs for all seasons</li>
+  <li class="nsd-action nsd-epub-movie nsd-movie-only">Download as EPUB...</li>
+  <li class="nsd-action nsd-epub-season nsd-series-only">Download EPUB for this season...</li>
+  <li class="nsd-action nsd-epub-all nsd-series-only">Download EPUB for all seasons...</li>
 </ol>
 `;
 
@@ -94,6 +97,8 @@ body:hover #nsd-menu { display: block; }
 #nsd-menu:hover .nsd-action { display: block; }
 #nsd-menu:not(.nsd-is-series) .nsd-series-only { display: none !important; }
 #nsd-menu.nsd-is-series .nsd-not-series { display: none; }
+#nsd-menu.nsd-is-series .nsd-movie-only { display: none !important; }
+#nsd-menu:not(.nsd-is-series) .nsd-movie-only { }
 
 #nsd-progress-bars {
   position: fixed;
@@ -105,6 +110,78 @@ body:hover #nsd-menu { display: block; }
   width: 100%;
   background: transparent;
   cursor: pointer;
+}
+
+#nsd-epub-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 99999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#nsd-epub-modal {
+  background: #222;
+  color: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  width: 340px;
+  font-family: Netflix Sans, Helvetica Neue, Segoe UI, sans-serif;
+  font-size: 14px;
+}
+#nsd-epub-modal h2 {
+  margin: 0 0 16px;
+  font-size: 18px;
+  color: #e50914;
+}
+#nsd-epub-modal label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: #aaa;
+}
+#nsd-epub-modal select {
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 16px;
+  background: #333;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 6px;
+  font-size: 14px;
+  appearance: auto;
+}
+#nsd-epub-modal .nsd-btn-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+#nsd-epub-modal button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+}
+#nsd-epub-modal .nsd-btn-primary {
+  background: #e50914;
+  color: #fff;
+}
+#nsd-epub-modal .nsd-btn-primary:hover { background: #f6121d; }
+#nsd-epub-modal .nsd-btn-secondary {
+  background: #444;
+  color: #fff;
+}
+#nsd-epub-modal .nsd-btn-secondary:hover { background: #555; }
+#nsd-epub-modal .nsd-status {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #aaa;
+  text-align: center;
+  min-height: 18px;
 }
 `;
 
@@ -124,6 +201,9 @@ function ensureMenu() {
     menu.querySelector('.nsd-download-to-end').addEventListener('click', () => downloadBatchFrom(batchToEnd));
     menu.querySelector('.nsd-download-season').addEventListener('click', () => downloadBatchFrom(batchSeason));
     menu.querySelector('.nsd-download-all').addEventListener('click', () => downloadBatchFrom(batchAll));
+    menu.querySelector('.nsd-epub-movie').addEventListener('click', () => showEpubModal('movie'));
+    menu.querySelector('.nsd-epub-season').addEventListener('click', () => showEpubModal('season'));
+    menu.querySelector('.nsd-epub-all').addEventListener('click', () => showEpubModal('all'));
   }
   return menu;
 }
@@ -244,8 +324,13 @@ function processMetadata(data) {
     if (document.location.pathname.startsWith('/watch'))
       menu.style.display = '';
 
-    // Resume batch if active
+    // Resume ZIP batch if active
     if (batch && batch.length > 0) downloadBatch(true);
+
+    // Resume EPUB batch if active
+    if (sessionStorage.getItem('NSD_epub_batch')) {
+      processEpubBatchStep();
+    }
   };
   waitForSubs();
 }
@@ -415,6 +500,190 @@ async function downloadBatch(isResume) {
   }
 }
 
+// ========== EPUB Modal + Download ==========
+
+function getAvailableLangs() {
+  const subs = getSubsFromCache(true);
+  if (!subs) return [];
+  return Object.keys(subs).filter(l => !l.endsWith('-forced')).sort();
+}
+
+// scope: 'movie' | 'season' | 'all'
+function showEpubModal(scope) {
+  // Remove existing modal
+  const existing = document.getElementById('nsd-epub-modal-overlay');
+  if (existing) existing.remove();
+
+  const langs = getAvailableLangs();
+  if (langs.length === 0) {
+    alert('No subtitle tracks available yet. Wait for the player to load.');
+    return;
+  }
+
+  const scopeLabel = scope === 'all' ? 'all seasons' : scope === 'season' ? 'this season' : 'this movie';
+  const langOptions = langs.map(l => `<option value="${l}">${l}</option>`).join('');
+
+  const overlay = document.createElement('div');
+  overlay.id = 'nsd-epub-modal-overlay';
+  overlay.innerHTML = `
+    <div id="nsd-epub-modal">
+      <h2>Download EPUB — ${scopeLabel}</h2>
+      <label for="nsd-main-lang">Main language</label>
+      <select id="nsd-main-lang">${langOptions}</select>
+      <label for="nsd-sub-lang">Second language (optional)</label>
+      <select id="nsd-sub-lang"><option value="">— None —</option>${langOptions}</select>
+      <div class="nsd-btn-row">
+        <button class="nsd-btn-secondary" id="nsd-epub-cancel">Cancel</button>
+        <button class="nsd-btn-primary" id="nsd-epub-go">Download EPUB</button>
+      </div>
+      <div class="nsd-status" id="nsd-epub-status"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Close on overlay click (but not modal body)
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  document.getElementById('nsd-epub-cancel').addEventListener('click', () => overlay.remove());
+  document.getElementById('nsd-epub-go').addEventListener('click', () => {
+    const mainLang = document.getElementById('nsd-main-lang').value;
+    const subLang = document.getElementById('nsd-sub-lang').value;
+    downloadAsEpub(mainLang, subLang || null, scope, overlay);
+  });
+}
+
+// Start EPUB batch: save config to sessionStorage, then process current episode
+async function downloadAsEpub(mainLang, subLang, scope, overlay) {
+  const statusEl = document.getElementById('nsd-epub-status');
+  const goBtn = document.getElementById('nsd-epub-go');
+  goBtn.disabled = true;
+  goBtn.textContent = 'Starting...';
+
+  try {
+    const [titleWithEp, seriesTitle] = getTitleFromCache();
+
+    // Determine which episodes to include
+    let episodeIds;
+    if (scope === 'all' && batchAll) {
+      episodeIds = [...batchAll];
+    } else if (scope === 'season' && batchSeason) {
+      episodeIds = [...batchSeason];
+    } else {
+      episodeIds = [parseInt(getVideoId())];
+    }
+
+    // Save EPUB batch state to sessionStorage
+    const epubBatch = {
+      remaining: episodeIds,
+      chapters: [],
+      mainLang,
+      subLang: subLang || null,
+      seriesTitle: seriesTitle || titleWithEp
+    };
+    sessionStorage.setItem('NSD_epub_batch', JSON.stringify(epubBatch));
+
+    // Close modal and start processing
+    overlay.remove();
+    await processEpubBatchStep();
+
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + err.message;
+    goBtn.disabled = false;
+    goBtn.textContent = 'Download EPUB';
+  }
+}
+
+// Process current episode for EPUB batch, then navigate to next or finalize
+async function processEpubBatchStep() {
+  const raw = sessionStorage.getItem('NSD_epub_batch');
+  if (!raw) return;
+  const epubBatch = JSON.parse(raw);
+
+  // Wait for current episode's subs to load
+  while (getSubsFromCache(true) === null) {
+    await sleep(0.5);
+  }
+
+  const currentId = parseInt(getVideoId());
+  const epSubs = getSubsFromCache(true);
+  const epTitle = titleCache[currentId];
+
+  // Build chapter title
+  let chapterTitle;
+  if (epTitle && epTitle.type === 'show') {
+    chapterTitle = `Season ${epTitle.season} Episode ${epTitle.episode}`;
+  } else {
+    chapterTitle = `Episode ${epubBatch.chapters.length + 1}`;
+  }
+
+  // Fetch and parse main language
+  if (epSubs && epSubs[epubBatch.mainLang]) {
+    const mainVtt = await fetchVttForLang(epSubs, epubBatch.mainLang);
+    if (mainVtt) {
+      const mainCaptions = parseVTT(mainVtt);
+
+      let subCaptions = null;
+      if (epubBatch.subLang && epubBatch.subLang !== epubBatch.mainLang && epSubs[epubBatch.subLang]) {
+        const subVtt = await fetchVttForLang(epSubs, epubBatch.subLang);
+        if (subVtt) subCaptions = parseVTT(subVtt);
+      }
+
+      const html = mergeSubtitles(mainCaptions, subCaptions);
+      epubBatch.chapters.push({ title: chapterTitle, html });
+    }
+  }
+
+  // Remove current episode from remaining list
+  epubBatch.remaining = epubBatch.remaining.filter(id => id !== currentId);
+
+  if (epubBatch.remaining.length === 0) {
+    // All episodes done — generate EPUB
+    sessionStorage.removeItem('NSD_epub_batch');
+
+    if (epubBatch.chapters.length === 0) {
+      alert('No subtitles found for the selected language.');
+      return;
+    }
+
+    const zip = generateEPUB(epubBatch.seriesTitle, epubBatch.chapters);
+    const blob = await zip.generateAsync({ type: 'blob' });
+    saveAs(blob, epubBatch.seriesTitle + '.epub');
+  } else {
+    // Save state and navigate to next episode
+    sessionStorage.setItem('NSD_epub_batch', JSON.stringify(epubBatch));
+    await sleep(settings.batchDelay);
+    window.location = window.location.origin + '/watch/' + epubBatch.remaining[0];
+  }
+}
+
+async function fetchVttForLang(epSubs, lang) {
+  const formats = epSubs[lang];
+  if (!formats) return null;
+
+  // Prefer WebVTT format
+  const preferred = [WEBVTT, IMSC1_1, DFXP, SIMPLE];
+  let urls = null;
+  for (const fmt of preferred) {
+    if (formats[fmt]) {
+      urls = [...formats[fmt][0]]; // clone the URL array
+      break;
+    }
+  }
+  if (!urls || urls.length === 0) return null;
+
+  while (urls.length > 0) {
+    const url = urls.splice(Math.random() * urls.length | 0, 1)[0];
+    try {
+      const resp = await fetch(url, { mode: 'cors' });
+      const text = await resp.text();
+      if (text.length > 0) return text;
+    } catch (_) {}
+  }
+  return null;
+}
+
 // Resume batch from sessionStorage on page load
 try {
   const saved = sessionStorage.getItem('NSD_batch');
@@ -448,5 +717,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   } else if (msg.action === 'downloadAll') {
     if (batchAll) downloadBatchFrom(batchAll);
     sendResponse({ ok: true });
+  } else if (msg.action === 'downloadEpubSeason') {
+    showEpubModal('season');
+    sendResponse({ ok: true });
+  } else if (msg.action === 'downloadEpubAll') {
+    showEpubModal('all');
+    sendResponse({ ok: true });
+  } else if (msg.action === 'getLangs') {
+    sendResponse({ langs: getAvailableLangs() });
   }
 });

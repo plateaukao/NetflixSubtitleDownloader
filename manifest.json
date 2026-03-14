@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.netflix.com/*"],
-      "js": ["lib/jszip.min.js", "lib/FileSaver.min.js", "content.js"],
+      "js": ["lib/jszip.min.js", "lib/FileSaver.min.js", "epub.js", "content.js"],
       "run_at": "document_start"
     }
   ],
