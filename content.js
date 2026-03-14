@@ -25,6 +25,7 @@ const STOP = 'NSD_STOP';
 let subCache = {};
 let titleCache = {};
 let idOverrides = {};
+let coverImageUrl = null;
 
 let batchAll = null;
 let batchSeason = null;
@@ -316,6 +317,24 @@ function processMetadata(data) {
     titleCache[result.id] = { type, title };
   } else {
     return;
+  }
+
+  // Extract cover image URL from metadata
+  // Netflix metadata may include artwork in various locations
+  try {
+    const artwork = result.artwork || result.boxart || result.storyart;
+    if (artwork && artwork.length > 0) {
+      // Pick the largest image
+      const sorted = [...artwork].sort((a, b) => (b.w || 0) - (a.w || 0));
+      coverImageUrl = sorted[0].url;
+    }
+  } catch (_) {}
+  // Fallback: try og:image meta tag
+  if (!coverImageUrl) {
+    try {
+      const ogImg = document.querySelector('meta[property="og:image"]');
+      if (ogImg) coverImageUrl = ogImg.content;
+    } catch (_) {}
   }
 
   // Wait for sub cache to populate, then show menu
@@ -647,7 +666,41 @@ async function processEpubBatchStep() {
       return;
     }
 
-    const zip = generateEPUB(epubBatch.seriesTitle, epubBatch.chapters);
+    // Fetch cover image
+    let coverData = null;
+    const imgUrl = coverImageUrl || (() => {
+      try { return document.querySelector('meta[property="og:image"]')?.content; } catch (_) { return null; }
+    })();
+    if (imgUrl) {
+      try {
+        const resp = await fetch(imgUrl, { mode: 'cors' });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const arrayBuf = await blob.arrayBuffer();
+          const isWebp = blob.type === 'image/webp';
+          const isPng = blob.type === 'image/png';
+          coverData = {
+            data: new Uint8Array(arrayBuf),
+            mediaType: isPng ? 'image/png' : 'image/jpeg',
+            ext: isPng ? 'png' : 'jpg'
+          };
+          // Convert WebP to JPEG via canvas for broader EPUB reader support
+          if (isWebp) {
+            try {
+              const bitmap = await createImageBitmap(blob);
+              const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(bitmap, 0, 0);
+              const jpegBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 });
+              const jpegBuf = await jpegBlob.arrayBuffer();
+              coverData = { data: new Uint8Array(jpegBuf), mediaType: 'image/jpeg', ext: 'jpg' };
+            } catch (_) {} // keep original if conversion fails
+          }
+        }
+      } catch (_) {}
+    }
+
+    const zip = generateEPUB(epubBatch.seriesTitle, epubBatch.chapters, coverData);
     const blob = await zip.generateAsync({ type: 'blob' });
     saveAs(blob, epubBatch.seriesTitle + '.epub');
   } else {

@@ -144,10 +144,12 @@ function escapeXML(str) {
 
 // ========== EPUB3 Generator ==========
 
-function generateEPUB(title, chapters) {
+// coverData: { data: Uint8Array, mediaType: 'image/jpeg'|'image/png', ext: 'jpg'|'png' } or null
+function generateEPUB(title, chapters, coverData) {
   const zip = new JSZip();
   const uuid = crypto.randomUUID();
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const hasCover = coverData && coverData.data;
 
   // 1. mimetype (must be first — JSZip doesn't guarantee order, but EPUB readers are lenient)
   zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
@@ -167,9 +169,30 @@ function generateEPUB(title, chapters) {
 h1 { text-align: center; margin-top: 2em; page-break-before: always; }
 h3 { margin: 0.3em 0; }
 .sub { font-size: 60%; color: gray; margin-top: 0.2em; margin-left: 1.0em; margin-bottom: 1.5em; }
-.cc { font-size: 70%; }`);
+.cc { font-size: 70%; }
+.cover-page { text-align: center; page-break-after: always; }
+.cover-page img { max-width: 100%; max-height: 100%; }`);
 
-  // 4. Chapter XHTML files
+  // 4. Cover image + cover page
+  if (hasCover) {
+    zip.file(`OEBPS/images/cover.${coverData.ext}`, coverData.data, { binary: true });
+    zip.file('OEBPS/cover.xhtml',
+`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Cover</title>
+  <link rel="stylesheet" type="text/css" href="stylesheet.css"/>
+</head>
+<body>
+  <div class="cover-page">
+    <img src="images/cover.${coverData.ext}" alt="Cover"/>
+  </div>
+</body>
+</html>`);
+  }
+
+  // 5. Chapter XHTML files
   for (let i = 0; i < chapters.length; i++) {
     const ch = chapters[i];
     zip.file(`OEBPS/chapter${i + 1}.xhtml`,
@@ -187,10 +210,18 @@ h3 { margin: 0.3em 0; }
 </html>`);
   }
 
-  // 5. content.opf
-  let manifestItems = `    <item id="css" href="stylesheet.css" media-type="text/css"/>\n`;
-  manifestItems += `    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n`;
+  // 6. content.opf
+  let manifestItems = '';
   let spineItems = '';
+
+  if (hasCover) {
+    manifestItems += `    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>\n`;
+    manifestItems += `    <item id="cover-image" href="images/cover.${coverData.ext}" media-type="${coverData.mediaType}" properties="cover-image"/>\n`;
+    spineItems += `    <itemref idref="cover"/>\n`;
+  }
+
+  manifestItems += `    <item id="css" href="stylesheet.css" media-type="text/css"/>\n`;
+  manifestItems += `    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n`;
   for (let i = 0; i < chapters.length; i++) {
     manifestItems += `    <item id="chapter${i + 1}" href="chapter${i + 1}.xhtml" media-type="application/xhtml+xml"/>\n`;
     spineItems += `    <itemref idref="chapter${i + 1}"/>\n`;
@@ -212,8 +243,11 @@ ${manifestItems}  </manifest>
 ${spineItems}  </spine>
 </package>`);
 
-  // 6. nav.xhtml (Table of Contents)
+  // 7. nav.xhtml (Table of Contents)
   let tocItems = '';
+  if (hasCover) {
+    tocItems += `      <li><a href="cover.xhtml">Cover</a></li>\n`;
+  }
   for (let i = 0; i < chapters.length; i++) {
     tocItems += `      <li><a href="chapter${i + 1}.xhtml">${escapeXML(chapters[i].title)}</a></li>\n`;
   }
