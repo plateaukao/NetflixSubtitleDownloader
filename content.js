@@ -39,7 +39,9 @@ let settings = {
   prefLocale: '',
   langs: '',
   subFormat: WEBVTT,
-  batchDelay: 0
+  batchDelay: 0,
+  epubMainLang: '',
+  epubSubLang: ''
 };
 
 chrome.storage.local.get(settings, stored => {
@@ -575,6 +577,18 @@ function showEpubModal(scope) {
     </div>
   `;
   document.body.appendChild(overlay);
+
+  // Pre-select default languages from settings
+  const mainSelect = overlay.querySelector('#nsd-main-lang');
+  const subSelect = overlay.querySelector('#nsd-sub-lang');
+  if (settings.epubMainLang) {
+    const match = langs.find(l => l.toLowerCase().startsWith(settings.epubMainLang.toLowerCase()));
+    if (match) mainSelect.value = match;
+  }
+  if (settings.epubSubLang) {
+    const match = langs.find(l => l.toLowerCase().startsWith(settings.epubSubLang.toLowerCase()));
+    if (match) subSelect.value = match;
+  }
 
   // Close on overlay click (but not modal body)
   overlay.addEventListener('click', e => {

@@ -6,7 +6,9 @@ const DEFAULTS = {
   prefLocale: '',
   langs: '',
   subFormat: 'webvtt-lssdh-ios8',
-  batchDelay: 0
+  batchDelay: 0,
+  epubMainLang: '',
+  epubSubLang: ''
 };
 
 // Load settings
@@ -17,6 +19,8 @@ chrome.storage.local.get(DEFAULTS, s => {
   $('opt-langs').value = s.langs;
   $('opt-format').value = s.subFormat;
   $('opt-delay').value = s.batchDelay;
+  $('opt-epub-main').value = s.epubMainLang;
+  $('opt-epub-sub').value = s.epubSubLang;
 });
 
 // Save on change
@@ -28,6 +32,8 @@ $('opt-locale').addEventListener('change', e => save('prefLocale', e.target.valu
 $('opt-langs').addEventListener('change', e => save('langs', e.target.value.trim()));
 $('opt-format').addEventListener('change', e => save('subFormat', e.target.value));
 $('opt-delay').addEventListener('change', e => save('batchDelay', parseFloat(e.target.value) || 0));
+$('opt-epub-main').addEventListener('change', e => save('epubMainLang', e.target.value.trim()));
+$('opt-epub-sub').addEventListener('change', e => save('epubSubLang', e.target.value.trim()));
 
 // Action buttons
 function sendToTab(action) {
