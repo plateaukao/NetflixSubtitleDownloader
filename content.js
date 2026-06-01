@@ -25,7 +25,7 @@ const STOP = 'NSD_STOP';
 let subCache = {};
 let titleCache = {};
 let idOverrides = {};
-let coverImageUrl = null;
+let coverCandidates = [];
 
 let batchAll = null;
 let batchSeason = null;
@@ -186,6 +186,49 @@ body:hover #nsd-menu { display: block; }
   text-align: center;
   min-height: 18px;
 }
+#nsd-cover-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.nsd-cover-tile {
+  width: 72px;
+  height: 104px;
+  flex: 0 0 auto;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.nsd-cover-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.nsd-cover-tile.nsd-cover-selected {
+  border-color: #e50914;
+}
+.nsd-cover-none,
+.nsd-cover-upload {
+  font-size: 11px;
+  color: #aaa;
+  text-align: center;
+  border-style: dashed;
+  border-color: #555;
+}
+.nsd-cover-upload:hover,
+.nsd-cover-none:hover {
+  color: #fff;
+  border-color: #888;
+}
 `;
 
 function ensureMenu() {
@@ -321,39 +364,31 @@ function processMetadata(data) {
     return;
   }
 
-  // Extract cover image URL — prefer portrait boxart (book-cover ratio)
-  coverImageUrl = null;
+  // Collect cover-image candidates for the user to pick from in the EPUB modal.
+  // Order: portrait (book-cover ratio) first, then landscape; largest within each group.
+  coverCandidates = [];
   try {
-    // 1. Prefer boxart (portrait poster) over landscape artwork
     const sources = [result.boxart, result.artwork, result.storyart].filter(Boolean);
+    const all = [];
     for (const artList of sources) {
-      if (!artList || !artList.length) continue;
-      // Pick portrait images (h > w) first, then largest
-      const portrait = artList.filter(a => (a.h || 0) > (a.w || 0));
-      if (portrait.length > 0) {
-        portrait.sort((a, b) => (b.h || 0) - (a.h || 0));
-        coverImageUrl = portrait[0].url;
-        break;
+      if (!artList) continue;
+      for (const a of artList) {
+        if (a && a.url) all.push(a);
       }
     }
-    // If no portrait found, take the largest from any source
-    if (!coverImageUrl) {
-      for (const artList of sources) {
-        if (artList && artList.length > 0) {
-          const sorted = [...artList].sort((a, b) => (b.w || 0) - (a.w || 0));
-          coverImageUrl = sorted[0].url;
-          break;
-        }
-      }
-    }
+    all.sort((a, b) => {
+      const aPortrait = (a.h || 0) > (a.w || 0) ? 0 : 1;
+      const bPortrait = (b.h || 0) > (b.w || 0) ? 0 : 1;
+      if (aPortrait !== bPortrait) return aPortrait - bPortrait;
+      return (b.w || 0) * (b.h || 0) - (a.w || 0) * (a.h || 0);
+    });
+    for (const a of all) addCoverCandidate(a.url);
   } catch (_) {}
-  // 2. Fallback: try og:image meta tag
-  if (!coverImageUrl) {
-    try {
-      const ogImg = document.querySelector('meta[property="og:image"]');
-      if (ogImg) coverImageUrl = ogImg.content;
-    } catch (_) {}
-  }
+  // Fallback: og:image meta tag
+  try {
+    const ogImg = document.querySelector('meta[property="og:image"]');
+    if (ogImg) addCoverCandidate(ogImg.content);
+  } catch (_) {}
 
   // Wait for sub cache to populate, then show menu
   const waitForSubs = async () => {
@@ -376,6 +411,10 @@ function processMetadata(data) {
 const sleep = (sec, val) => new Promise(r => setTimeout(r, sec * 1000, val));
 
 const getVideoId = () => window.location.pathname.split('/').pop();
+
+const addCoverCandidate = url => {
+  if (url && !coverCandidates.includes(url)) coverCandidates.push(url);
+};
 
 function getFromCache(cache, name, silent) {
   const id = getVideoId();
@@ -569,6 +608,8 @@ function showEpubModal(scope) {
       <select id="nsd-main-lang">${langOptions}</select>
       <label for="nsd-sub-lang">Second language (optional)</label>
       <select id="nsd-sub-lang"><option value="">— None —</option>${langOptions}</select>
+      <label>Book cover</label>
+      <div id="nsd-cover-grid"></div>
       <div class="nsd-btn-row">
         <button class="nsd-btn-secondary" id="nsd-epub-cancel">Cancel</button>
         <button class="nsd-btn-primary" id="nsd-epub-go">Download EPUB</button>
@@ -590,6 +631,9 @@ function showEpubModal(scope) {
     if (match) subSelect.value = match;
   }
 
+  // Build the cover-image picker
+  buildCoverGrid(overlay);
+
   // Close on overlay click (but not modal body)
   overlay.addEventListener('click', e => {
     if (e.target === overlay) overlay.remove();
@@ -599,12 +643,110 @@ function showEpubModal(scope) {
   document.getElementById('nsd-epub-go').addEventListener('click', () => {
     const mainLang = document.getElementById('nsd-main-lang').value;
     const subLang = document.getElementById('nsd-sub-lang').value;
-    downloadAsEpub(mainLang, subLang || null, scope, overlay);
+    const coverUrl = overlay._nsdCoverUrl || null;
+    downloadAsEpub(mainLang, subLang || null, scope, overlay, coverUrl);
+  });
+}
+
+// Populate the cover-image thumbnail picker. The chosen image URL (a Netflix
+// art URL or an uploaded data: URL) is stored on overlay._nsdCoverUrl; '' means
+// "No cover". The first (best) candidate is pre-selected to match the previous
+// automatic behaviour. Selection is tracked by tile element so large uploaded
+// data: URLs don't have to be stored as DOM attributes.
+function buildCoverGrid(overlay) {
+  const grid = overlay.querySelector('#nsd-cover-grid');
+  if (!grid) return;
+
+  const tiles = [];
+  const select = (tile, url) => {
+    overlay._nsdCoverUrl = url;
+    tiles.forEach(t => t.classList.toggle('nsd-cover-selected', t === tile));
+  };
+
+  const addTile = (url, label) => {
+    const tile = document.createElement('div');
+    tile.className = 'nsd-cover-tile';
+    const img = document.createElement('img');
+    img.src = url;
+    img.loading = 'lazy';
+    img.alt = label;
+    tile.appendChild(img);
+    tile.addEventListener('click', () => select(tile, url));
+    grid.appendChild(tile);
+    tiles.push(tile);
+    return tile;
+  };
+
+  coverCandidates.forEach((url, i) => addTile(url, 'Cover ' + (i + 1)));
+
+  // Upload tile — lets the user supply their own cover image
+  const uploadTile = document.createElement('div');
+  uploadTile.className = 'nsd-cover-tile nsd-cover-upload';
+  uploadTile.textContent = '+ Upload';
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*';
+  fileInput.style.display = 'none';
+  uploadTile.appendChild(fileInput);
+  uploadTile.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    try {
+      const dataUrl = await readCoverFile(file);
+      const tile = addTile(dataUrl, 'Custom cover');
+      grid.insertBefore(tile, uploadTile); // keep upload/no-cover tiles last
+      select(tile, dataUrl);
+    } catch (_) {
+      alert('Could not read that image.');
+    }
+    fileInput.value = ''; // allow re-selecting the same file
+  });
+  grid.appendChild(uploadTile);
+
+  // "No cover" tile
+  const none = document.createElement('div');
+  none.className = 'nsd-cover-tile nsd-cover-none';
+  none.textContent = 'No cover';
+  none.addEventListener('click', () => select(none, ''));
+  grid.appendChild(none);
+  tiles.push(none);
+
+  if (tiles.length > 1) select(tiles[0], coverCandidates[0]);
+  else select(none, '');
+}
+
+// Read an uploaded image file into a data: URL, downscaling large images so the
+// cover stays small enough to survive sessionStorage across batch navigation.
+function readCoverFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => resolve(reader.result); // fall back to the raw data URL
+      img.onload = () => {
+        try {
+          const maxSide = 1200;
+          const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+          if (scale === 1) { resolve(reader.result); return; }
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.9));
+        } catch (_) {
+          resolve(reader.result);
+        }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
   });
 }
 
 // Start EPUB batch: save config to sessionStorage, then process current episode
-async function downloadAsEpub(mainLang, subLang, scope, overlay) {
+async function downloadAsEpub(mainLang, subLang, scope, overlay, coverUrl) {
   const statusEl = document.getElementById('nsd-epub-status');
   const goBtn = document.getElementById('nsd-epub-go');
   goBtn.disabled = true;
@@ -629,7 +771,8 @@ async function downloadAsEpub(mainLang, subLang, scope, overlay) {
       chapters: [],
       mainLang,
       subLang: subLang || null,
-      seriesTitle: seriesTitle || titleWithEp
+      seriesTitle: seriesTitle || titleWithEp,
+      coverUrl: coverUrl || null
     };
     sessionStorage.setItem('NSD_epub_batch', JSON.stringify(epubBatch));
 
@@ -696,11 +839,9 @@ async function processEpubBatchStep() {
       return;
     }
 
-    // Fetch cover image
+    // Fetch the cover image the user chose in the modal
     let coverData = null;
-    const imgUrl = coverImageUrl || (() => {
-      try { return document.querySelector('meta[property="og:image"]')?.content; } catch (_) { return null; }
-    })();
+    const imgUrl = epubBatch.coverUrl;
     if (imgUrl) {
       try {
         const resp = await fetch(imgUrl, { mode: 'cors' });
@@ -779,7 +920,7 @@ window.addEventListener('netflix_sub_downloader_data', e => {
   if (type === 'subs') processSubInfo(data);
   else if (type === 'id_override') idOverrides[data[0]] = data[1];
   else if (type === 'metadata') processMetadata(data);
-  else if (type === 'boxart') { if (!coverImageUrl) coverImageUrl = data; }
+  else if (type === 'boxart') { if (data && !coverCandidates.includes(data)) coverCandidates.unshift(data); }
   else if (type === 'popstate') {
     const menu = document.getElementById('nsd-menu');
     if (menu) menu.style.display = data.startsWith('/watch') ? '' : 'none';
