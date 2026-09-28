@@ -268,5 +268,11 @@ ${tocItems}    </ol>
 </body>
 </html>`);
 
+  zip.forEach((name, file) => {
+    if (name === 'mimetype' || file.dir) return;
+    file.options.compression = 'DEFLATE';
+    file.options.compressionOptions = { level: 6 };
+  });
+
   return zip;
 }
