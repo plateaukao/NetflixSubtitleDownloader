@@ -39,8 +39,9 @@ $('opt-epub-sub').addEventListener('change', e => save('epubSubLang', e.target.v
 function sendToTab(action) {
   chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
     if (tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, { action }, () => {
-        $('status').textContent = 'Download started!';
+      chrome.tabs.sendMessage(tabs[0].id, { action }, response => {
+        $('status').textContent = chrome.runtime.lastError || !response?.ok
+          ? 'Could not start download. Reload the page and try again.' : 'Download started!';
       });
     }
   });
@@ -60,8 +61,10 @@ $('btn-epub-all').addEventListener('click', () => {
 
 // Check status
 chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-  if (!tabs[0] || !tabs[0].url || !tabs[0].url.includes('netflix.com')) {
-    $('status').textContent = 'Navigate to Netflix to use this extension.';
+  const host = (() => { try { return new URL(tabs[0]?.url).hostname; } catch (_) { return ''; } })();
+  const disney = host === 'www.disneyplus.com';
+  if (host !== 'www.netflix.com' && !disney) {
+    $('status').textContent = 'Navigate to Netflix or Disney+ to use this extension.';
     $('btn-download').disabled = true;
     $('btn-season').disabled = true;
     $('btn-all').disabled = true;
@@ -70,27 +73,46 @@ chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
     return;
   }
 
+  if (disney) {
+    $('btn-download').textContent = 'Download subtitles for this video (SRT ZIP)';
+    $('btn-season').hidden = true;
+    $('btn-all').textContent = 'Download subtitles for whole series';
+    $('btn-epub-season').textContent = 'Download EPUB (this video)...';
+    $('btn-epub-all').textContent = 'Download EPUB (whole series)...';
+    $('opt-force-subs').closest('label').hidden = true;
+    $('opt-locale').closest('label').hidden = true;
+    $('opt-format').closest('label').hidden = true;
+    $('opt-delay').closest('label').hidden = true;
+    $('opt-ep-title').closest('label').hidden = true;
+  }
+
   chrome.tabs.sendMessage(tabs[0].id, { action: 'getStatus' }, response => {
     if (chrome.runtime.lastError || !response) {
-      $('status').textContent = 'Reload the Netflix page to activate.';
-      $('btn-download').disabled = true;
-      $('btn-season').disabled = true;
-      $('btn-all').disabled = true;
-      return;
-    }
-
-    if (!response.onWatchPage) {
-      $('status').textContent = 'Play a show or movie to download subs.';
+      $('status').textContent = `Reload the ${disney ? 'Disney+' : 'Netflix'} page to activate.`;
       $('btn-download').disabled = true;
       $('btn-season').disabled = true;
       $('btn-all').disabled = true;
       $('btn-epub-season').disabled = true;
-    $('btn-epub-all').disabled = true;
+      $('btn-epub-all').disabled = true;
+      return;
+    }
+
+    if (!response.onWatchPage) {
+      $('status').textContent = disney && response.onSeriesPage
+        ? 'Series ZIP is ready. Play an episode to choose EPUB languages.'
+        : disney ? 'Play a video and wait for subtitle tracks.' : 'Play a show or movie to download subs.';
+      $('btn-download').disabled = true;
+      $('btn-season').disabled = true;
+      $('btn-all').disabled = !disney || !response.onSeriesPage;
+      $('btn-epub-season').disabled = true;
+      $('btn-epub-all').disabled = true;
     } else if (response.langList.length === 0) {
       $('status').textContent = 'Waiting for subtitle data...';
       $('btn-download').disabled = true;
       $('btn-season').disabled = true;
-      $('btn-all').disabled = true;
+      $('btn-all').disabled = !disney;
+      $('btn-epub-season').disabled = true;
+      $('btn-epub-all').disabled = !disney;
     } else {
       $('status').textContent = `${response.langList.length} subtitle tracks available.`;
     }
